@@ -143,6 +143,38 @@ select:hover {
   text-transform: none;
 }
 
+.reasoning-select {
+  width: 74px;
+  height: 20px;
+  border-color: #555555;
+  background: #242424;
+  color: #dddddd;
+  padding: 0 3px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.reasoning-select:disabled {
+  color: #818181;
+}
+
+.clear-log-button {
+  height: 20px;
+  min-width: 42px;
+  border-color: #555555;
+  background: #242424;
+  color: #d6d6d6;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  text-transform: none;
+}
+
+.clear-log-button:hover {
+  border-color: #777777;
+  background: #2f2f2f;
+}
+
 .status-spinner {
   flex: 0 0 auto;
   width: 12px;
@@ -177,38 +209,6 @@ select:hover {
 }
 
 .editor-title {
-  background: #2f2f2f;
-}
-
-.editor-tools {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
-  gap: 8px;
-}
-
-.review-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.review-actions button {
-  height: 21px;
-  min-width: 58px;
-  border: 1px solid #4b4b4b;
-  border-radius: 999px;
-  background: #252525;
-  color: #dddddd;
-  padding: 0 10px;
-  font-size: 11px;
-  line-height: 19px;
-  text-transform: none;
-}
-
-.review-actions button:hover {
-  border-color: #767676;
   background: #2f2f2f;
 }
 
@@ -248,6 +248,16 @@ select:hover {
 #editor .ace_line .ace_minus,
 #editor .ace_line .ace_invalid.ace_deprecated {
   color: #ff8f8f;
+}
+
+.diff-row-add {
+  position: absolute;
+  background: rgba(38, 110, 56, 0.32);
+}
+
+.diff-row-remove {
+  position: absolute;
+  background: rgba(137, 48, 48, 0.34);
 }
 
 .splitter {
@@ -433,6 +443,7 @@ body.resizing .splitter {
 .message {
   margin-bottom: 8px;
   border: 1px solid var(--line);
+  border-left: 3px solid #666666;
   border-radius: 3px;
   background: #1f1f1f;
   padding: 7px 8px;
@@ -442,19 +453,31 @@ body.resizing .splitter {
 }
 
 .message.user {
-  border-left: 3px solid var(--accent);
+  border-left-color: #8a8a8a;
 }
 
-.message.assistant {
-  border-left: 3px solid var(--ok);
+.message.user.interrupted .message-text {
+  text-decoration: line-through;
 }
 
-.message.assistant.canceled {
-  border-left-color: #787878;
+.message.info {
+  border-left-color: #4d9de0;
+}
+
+.message.suggestion {
+  border-left-color: #4d9de0;
+}
+
+.message.suggestion.approved {
+  border-left-color: var(--ok);
+}
+
+.message.suggestion.canceled {
+  border-left-color: var(--error);
   color: #9d9d9d;
 }
 
-.message.assistant.canceled .message-text {
+.message.suggestion.canceled .message-text {
   text-decoration: line-through;
 }
 
@@ -464,11 +487,11 @@ body.resizing .splitter {
   text-decoration: none;
 }
 
-.message.error {
-  border-color: #5e3030;
-  border-left: 3px solid var(--error);
-  background: #281616;
-  color: #ffc8c8;
+.message.warning {
+  border-color: #5a4b24;
+  border-left-color: #d5a72d;
+  background: #241e12;
+  color: #ffe1a1;
 }
 
 .prompt-box {
@@ -493,6 +516,42 @@ body.resizing .splitter {
 
 .prompt-box textarea::placeholder {
   color: #7f7f7f;
+}
+
+.patch-choice {
+  display: grid;
+  gap: 8px;
+  min-height: 56px;
+  align-content: center;
+  border: 1px solid #414141;
+  border-radius: 3px;
+  background: #101010;
+  padding: 8px;
+  color: #cfcfcf;
+  font-size: 12px;
+}
+
+.patch-choice-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.patch-choice button {
+  height: 26px;
+  min-width: 74px;
+  border: 1px solid #4b4b4b;
+  border-radius: 999px;
+  background: #252525;
+  color: #dddddd;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 24px;
+  text-transform: none;
+}
+
+.patch-choice button:hover {
+  border-color: #767676;
+  background: #2f2f2f;
 }
 
 @media (max-width: 860px) {

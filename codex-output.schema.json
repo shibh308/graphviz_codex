@@ -2,15 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["response", "output"],
+  "required": ["hasSuggestion", "response", "output"],
   "properties": {
+    "hasSuggestion": {
+      "type": "boolean",
+      "description": "True when the response proposes an updated DOT source for user review. False when answering without a DOT edit suggestion."
+    },
     "response": {
       "type": "string",
-      "description": "A concise Japanese summary of the DOT changes."
+      "description": "A concise Japanese response. For suggestions, summarize the DOT changes. For no-suggestion replies, answer the user's question."
     },
     "output": {
       "type": "string",
-      "description": "The complete updated DOT source, without Markdown fences."
+      "description": "The complete updated DOT source for suggestions. If hasSuggestion is false, return the unchanged current DOT source."
     }
   }
 }

@@ -14,10 +14,6 @@
             <div class="pane-title editor-title">
               <span>DOT Source</span>
               <div class="editor-tools">
-                <div class="review-actions hidden" id="reviewActions">
-                  <button type="button" id="rejectPatchButton">Cancel</button>
-                  <button type="button" class="primary-button" id="applyPatchButton">Apply</button>
-                </div>
                 <label class="vim-toggle" id="vimModeLabel">
                   <input type="checkbox" id="vimModeToggle">
                   <span>Vim</span>
@@ -31,18 +27,34 @@
             <div class="pane-title">
               <span>Codex Console</span>
               <span class="codex-status">
+                <select id="reasoningEffort" class="reasoning-select" aria-label="Codex reasoning effort" title="Codex reasoning effort">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="xhigh">XHigh</option>
+                </select>
+                <button type="button" class="clear-log-button" id="clearLogButton" title="Clear conversation" aria-label="Clear conversation">
+                  Clear
+                </button>
                 <span class="status-spinner hidden" id="statusSpinner" aria-hidden="true"></span>
                 <button type="button" class="interrupt-button hidden" id="interruptButton">Stop</button>
                 <span id="editorStatus">ready</span>
               </span>
             </div>
             <div class="conversation" id="conversation">
-              <div class="message assistant">
+              <div class="message info">
                 Enter a DOT change request. The local server will ask Codex CLI to rewrite the graph.
               </div>
             </div>
             <form class="prompt-box" id="promptForm">
               <textarea id="promptInput" rows="3" placeholder="Enter to send"></textarea>
+              <div class="patch-choice hidden" id="patchChoice">
+                <span>Review the patch before continuing</span>
+                <div class="patch-choice-actions">
+                  <button type="button" id="rejectPatchButton">Cancel</button>
+                  <button type="button" class="primary-button" id="applyPatchButton">Apply</button>
+                </div>
+              </div>
             </form>
           </aside>
         </div>

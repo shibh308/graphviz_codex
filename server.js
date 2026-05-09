@@ -14,6 +14,7 @@ const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT || "5173", 10);
 const MAX_BODY_BYTES = 240_000;
 const CODEX_TIMEOUT_MS = 120_000;
+const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 
 const STATIC_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -58,9 +59,17 @@ function validateDotRequest(payload) {
     throw new Error("Request JSON must be an object.");
   }
 
-  const { dotSource, instruction } = payload;
+  const { dotSource, instruction, reasoningEffort = "medium", context = [] } = payload;
   if (typeof dotSource !== "string" || typeof instruction !== "string") {
     throw new Error("dotSource and instruction must be strings.");
+  }
+
+  if (typeof reasoningEffort !== "string" || !REASONING_EFFORTS.has(reasoningEffort)) {
+    throw new Error("Invalid reasoning effort.");
+  }
+
+  if (!Array.isArray(context)) {
+    throw new Error("context must be an array.");
   }
 
   if (!instruction.trim()) {
@@ -74,10 +83,25 @@ function validateDotRequest(payload) {
   if (instruction.length > 12_000) {
     throw new Error("Instruction is too large.");
   }
+
+  if (JSON.stringify(context).length > 90_000) {
+    throw new Error("Context is too large.");
+  }
 }
 
-async function runCodex(dotSource, instruction, abortSignal) {
-  const prompt = buildDotUpdatePrompt(dotSource, instruction);
+function normalizeContext(context) {
+  return context.slice(-12).map((item) => ({
+    user: typeof item?.user === "string" ? item.user.slice(0, 12_000) : "",
+    response: typeof item?.response === "string" ? item.response.slice(0, 8_000) : "",
+    patch: typeof item?.patch === "string" ? item.patch.slice(0, 30_000) : "",
+    decision: ["apply", "cancel", "no_suggestion", "interrupted", "error"].includes(item?.decision)
+      ? item.decision
+      : "unknown",
+  }));
+}
+
+async function runCodex(dotSource, instruction, context, reasoningEffort, abortSignal) {
+  const prompt = buildDotUpdatePrompt(dotSource, instruction, normalizeContext(context));
   const tempDir = await mkdtemp(path.join(tmpdir(), "graphviz-codex-"));
   const outputPath = path.join(tempDir, "last-message.json");
   const schemaPath = path.join(__dirname, "codex-output.schema.json");
@@ -93,6 +117,8 @@ async function runCodex(dotSource, instruction, abortSignal) {
           "--ephemeral",
           "--sandbox",
           "read-only",
+          "--config",
+          `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`,
           "--output-schema",
           schemaPath,
           "--output-last-message",
@@ -162,11 +188,16 @@ async function runCodex(dotSource, instruction, abortSignal) {
 
     const lastMessage = await readFile(outputPath, "utf8");
     const parsed = JSON.parse(lastMessage);
-    if (typeof parsed.response !== "string" || typeof parsed.output !== "string") {
+    if (
+      typeof parsed.hasSuggestion !== "boolean" ||
+      typeof parsed.response !== "string" ||
+      typeof parsed.output !== "string"
+    ) {
       throw new Error("Codex returned an invalid response shape.");
     }
 
     return {
+      hasSuggestion: parsed.hasSuggestion,
       response: parsed.response.trim(),
       output: parsed.output.trim(),
     };
@@ -223,7 +254,13 @@ const server = createServer(async (request, response) => {
     try {
       const payload = await readJsonBody(request);
       validateDotRequest(payload);
-      const result = await runCodex(payload.dotSource, payload.instruction, abortController.signal);
+      const result = await runCodex(
+        payload.dotSource,
+        payload.instruction,
+        payload.context || [],
+        payload.reasoningEffort || "medium",
+        abortController.signal,
+      );
       if (response.destroyed) return;
       sendJson(response, 200, result);
     } catch (error) {

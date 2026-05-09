@@ -23,10 +23,12 @@ const downloadButton = document.querySelector("#downloadButton");
 const exportFormat = document.querySelector("#exportFormat");
 const promptForm = document.querySelector("#promptForm");
 const promptInput = document.querySelector("#promptInput");
+const patchChoice = document.querySelector("#patchChoice");
 const conversation = document.querySelector("#conversation");
+const reasoningEffort = document.querySelector("#reasoningEffort");
+const clearLogButton = document.querySelector("#clearLogButton");
 const vimModeToggle = document.querySelector("#vimModeToggle");
 const vimModeLabel = document.querySelector("#vimModeLabel");
-const reviewActions = document.querySelector("#reviewActions");
 const applyPatchButton = document.querySelector("#applyPatchButton");
 const rejectPatchButton = document.querySelector("#rejectPatchButton");
 const splitter = document.querySelector("#splitter");
@@ -42,6 +44,11 @@ let reviewBaseDot = "";
 let inReviewMode = false;
 let codexAbortController = null;
 let pendingPatchMessage = null;
+let pendingInteraction = null;
+let pendingUserMessage = null;
+let diffMarkers = [];
+const codexHistory = [];
+const MAX_HISTORY_ITEMS = 12;
 
 function encodeDotForUrl(dot) {
   return btoa(encodeURIComponent(dot));
@@ -124,6 +131,37 @@ function markMessageCanceled(message) {
   }
 }
 
+function markMessageInterrupted(message) {
+  if (!message) return;
+
+  message.classList.add("interrupted");
+}
+
+function markMessageApplied(message) {
+  if (!message) return;
+
+  message.classList.add("approved");
+}
+
+function resetConversation() {
+  codexHistory.length = 0;
+  pendingInteraction = null;
+  pendingUserMessage = null;
+  pendingPatchMessage = null;
+  conversation.replaceChildren();
+  appendMessage(
+    "info",
+    "Enter a DOT change request. The local server will ask Codex CLI to rewrite the graph.",
+  );
+}
+
+function rememberHistory(item) {
+  codexHistory.push(item);
+  if (codexHistory.length > MAX_HISTORY_ITEMS) {
+    codexHistory.splice(0, codexHistory.length - MAX_HISTORY_ITEMS);
+  }
+}
+
 function showPanel() {
   resultPanel.classList.remove("hidden");
 }
@@ -195,33 +233,74 @@ function buildLineDiff(beforeText, afterText) {
   return rows;
 }
 
-function buildDiffText(beforeText, afterText) {
-  return buildLineDiff(beforeText, afterText)
-    .map((row) => {
-      const prefix = row.type === "add" ? "+ " : row.type === "remove" ? "- " : "  ";
+function buildPatchText(beforeText, afterText) {
+  const rows = buildLineDiff(beforeText, afterText);
+  return [
+    "--- current.dot",
+    "+++ proposed.dot",
+    ...rows.map((row) => {
+      const prefix = row.type === "add" ? "+" : row.type === "remove" ? "-" : " ";
       return `${prefix}${row.text}`;
-    })
-    .join("\n");
+    }),
+  ].join("\n");
+}
+
+function clearDiffMarkers() {
+  for (const marker of diffMarkers) {
+    editor.session.removeMarker(marker);
+  }
+  diffMarkers = [];
+}
+
+function markDiffRows(rows) {
+  clearDiffMarkers();
+  const Range = ace.require("ace/range").Range;
+  rows.forEach((row, index) => {
+    if (row.type !== "add" && row.type !== "remove") return;
+
+    const markerClass = row.type === "add" ? "diff-row-add" : "diff-row-remove";
+    const range = new Range(index, 0, index, 1);
+    diffMarkers.push(editor.session.addMarker(range, markerClass, "fullLine"));
+  });
 }
 
 async function enterReviewMode(summary, beforeText, afterText) {
+  const diffRows = buildLineDiff(beforeText, afterText);
+  const patch = buildPatchText(beforeText, afterText);
   pendingDot = afterText;
   reviewBaseDot = beforeText;
   inReviewMode = true;
   hidePanel();
-  reviewActions.classList.remove("hidden");
+  patchChoice.classList.remove("hidden");
+  promptInput.classList.add("hidden");
   vimModeLabel.classList.add("hidden");
   editor.setReadOnly(true);
   editor.session.setMode("ace/mode/diff");
-  editor.setValue(buildDiffText(beforeText, afterText), -1);
-  pendingPatchMessage = appendMessage("assistant", summary || "DOT更新案を作成しました。");
+  editor.setValue(
+    diffRows
+      .map((row) => {
+        const prefix = row.type === "add" ? "+ " : row.type === "remove" ? "- " : "  ";
+        return `${prefix}${row.text}`;
+      })
+      .join("\n"),
+    -1,
+  );
+  markDiffRows(diffRows);
+  pendingPatchMessage = appendMessage("suggestion", summary || "DOT更新案を作成しました。");
+  if (pendingInteraction) {
+    pendingInteraction.response = summary || "";
+    pendingInteraction.patch = patch;
+    pendingInteraction.decision = "pending";
+  }
   await renderDot(afterText, "review pending");
 }
 
 function exitReviewMode(nextDot, { canceled = false } = {}) {
   const dot = nextDot ?? reviewBaseDot;
   inReviewMode = false;
-  reviewActions.classList.add("hidden");
+  clearDiffMarkers();
+  patchChoice.classList.add("hidden");
+  promptInput.classList.remove("hidden");
   vimModeLabel.classList.remove("hidden");
   editor.session.setMode("ace/mode/dot");
   editor.setReadOnly(false);
@@ -231,8 +310,26 @@ function exitReviewMode(nextDot, { canceled = false } = {}) {
   hidePanel();
   if (canceled) {
     markMessageCanceled(pendingPatchMessage);
+  } else {
+    markMessageApplied(pendingPatchMessage);
+  }
+  if (pendingInteraction) {
+    pendingInteraction.decision = canceled ? "cancel" : "apply";
+    rememberHistory(pendingInteraction);
+    pendingInteraction = null;
   }
   pendingPatchMessage = null;
+}
+
+function recordNoSuggestion(request, responseText) {
+  appendMessage("info", responseText || "変更案はありません。");
+  rememberHistory({
+    user: request,
+    response: responseText || "",
+    patch: "",
+    decision: "no_suggestion",
+  });
+  pendingInteraction = null;
 }
 
 function applyPendingDot() {
@@ -359,17 +456,23 @@ function downloadGraph() {
 
 async function applyCodexPrompt(event) {
   event?.preventDefault();
-  if (codexBusy) return;
+  if (codexBusy || inReviewMode) return;
 
   const request = promptInput.value.trim();
   if (!request) return;
 
-  appendMessage("user", request);
+  pendingUserMessage = appendMessage("user", request);
+  pendingInteraction = {
+    user: request,
+    response: "",
+    patch: "",
+    decision: "pending",
+  };
   promptInput.value = "";
   promptInput.disabled = true;
+  reasoningEffort.disabled = true;
   codexBusy = true;
   clearPendingDot();
-  if (inReviewMode) exitReviewMode(reviewBaseDot, { canceled: true });
   hidePanel();
   setCodexStatus("codex running", true);
   const currentDot = editor.getValue();
@@ -385,6 +488,8 @@ async function applyCodexPrompt(event) {
       body: JSON.stringify({
         dotSource: currentDot,
         instruction: request,
+        reasoningEffort: reasoningEffort.value,
+        context: codexHistory,
       }),
     });
 
@@ -393,26 +498,51 @@ async function applyCodexPrompt(event) {
       throw new Error(payload?.error || "Codex request failed.");
     }
 
-    setCodexStatus("review pending");
-    await enterReviewMode(payload.response, currentDot, payload.output);
+    if (payload.hasSuggestion && payload.output !== currentDot) {
+      setCodexStatus("review pending");
+      await enterReviewMode(payload.response, currentDot, payload.output);
+      pendingUserMessage = null;
+    } else {
+      setCodexStatus("ready");
+      recordNoSuggestion(request, payload.response);
+      pendingUserMessage = null;
+    }
   } catch (error) {
     if (error?.name === "AbortError") {
-      appendMessage("error", "Codex request interrupted.");
+      markMessageInterrupted(pendingUserMessage);
+      appendMessage("warning", "Codex request interrupted.");
+      if (pendingInteraction) {
+        pendingInteraction.response = "Codex request interrupted.";
+        pendingInteraction.decision = "interrupted";
+        rememberHistory(pendingInteraction);
+      }
       setCodexStatus("interrupted");
+      pendingInteraction = null;
+      pendingUserMessage = null;
       return;
     }
 
     const message = error?.message || String(error);
-    appendMessage("error", `Codex error: ${message}`);
+    appendMessage("warning", `Codex error: ${message}`);
+    if (pendingInteraction) {
+      pendingInteraction.response = message;
+      pendingInteraction.decision = "error";
+      rememberHistory(pendingInteraction);
+    }
     showErrorPanel(message);
     setCodexStatus("codex error");
+    pendingInteraction = null;
+    pendingUserMessage = null;
   } finally {
     codexBusy = false;
     codexAbortController = null;
     statusSpinner.classList.add("hidden");
     interruptButton.classList.add("hidden");
     promptInput.disabled = false;
-    promptInput.focus();
+    reasoningEffort.disabled = false;
+    if (!inReviewMode) {
+      promptInput.focus();
+    }
   }
 }
 
@@ -465,6 +595,7 @@ splitter.addEventListener("pointerdown", startResize);
 applyPatchButton.addEventListener("click", applyPendingDot);
 rejectPatchButton.addEventListener("click", rejectPendingDot);
 interruptButton.addEventListener("click", interruptCodex);
+clearLogButton.addEventListener("click", resetConversation);
 
 syncDotToUrl(editor.getValue());
 renderGraph();
