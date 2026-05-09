@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Graphviz Codex Visualizer</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="workspace">
+        <div class="source-column">
+          <section class="editor-pane" aria-label="DOT editor">
+            <div class="pane-title editor-title">
+              <span>DOT Source</span>
+              <div class="editor-tools">
+                <div class="review-actions hidden" id="reviewActions">
+                  <button type="button" id="rejectPatchButton">Cancel</button>
+                  <button type="button" class="primary-button" id="applyPatchButton">Apply</button>
+                </div>
+                <label class="vim-toggle" id="vimModeLabel">
+                  <input type="checkbox" id="vimModeToggle">
+                  <span>Vim</span>
+                </label>
+              </div>
+            </div>
+            <div id="editor"></div>
+          </section>
+
+          <aside class="codex-pane" aria-label="Codex interaction">
+            <div class="pane-title">
+              <span>Codex Console</span>
+              <span class="codex-status">
+                <span class="status-spinner hidden" id="statusSpinner" aria-hidden="true"></span>
+                <button type="button" class="interrupt-button hidden" id="interruptButton">Stop</button>
+                <span id="editorStatus">ready</span>
+              </span>
+            </div>
+            <div class="conversation" id="conversation">
+              <div class="message assistant">
+                Enter a DOT change request. The local server will ask Codex CLI to rewrite the graph.
+              </div>
+            </div>
+            <form class="prompt-box" id="promptForm">
+              <textarea id="promptInput" rows="3" placeholder="Enter to send"></textarea>
+            </form>
+          </aside>
+        </div>
+
+        <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes"></div>
+
+        <section class="preview-pane" aria-label="Graphviz preview">
+          <div class="pane-title preview-title">
+            <span>Graph Preview</span>
+            <div class="preview-actions">
+              <span id="renderStatus">waiting</span>
+              <button type="button" id="fitButton" title="Fit graph">Fit</button>
+              <select id="exportFormat" aria-label="Export format">
+                <option value="svg">SVG</option>
+                <option value="png">PNG</option>
+              </select>
+              <button type="button" id="downloadButton" class="download-button" title="Export graph" aria-label="Export graph">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="preview-stage" id="previewStage">
+            <div id="preview" class="preview-output"></div>
+            <div class="preview-panel hidden" id="resultPanel" aria-live="polite"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/ace.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

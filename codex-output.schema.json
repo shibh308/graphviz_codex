@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["response", "output"],
+  "properties": {
+    "response": {
+      "type": "string",
+      "description": "A concise Japanese summary of the DOT changes."
+    },
+    "output": {
+      "type": "string",
+      "description": "The complete updated DOT source, without Markdown fences."
+    }
+  }
+}
