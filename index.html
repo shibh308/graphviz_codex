@@ -65,11 +65,18 @@
           <div class="pane-title preview-title">
             <span>Graph Preview</span>
             <div class="preview-actions">
+              <select id="renderEngine" aria-label="Render engine">
+                <option value="default">Default</option>
+                <option value="dot2tex">dot2tex</option>
+                <option value="math-svg">Math SVG</option>
+              </select>
+              <span class="status-spinner hidden" id="renderSpinner" aria-hidden="true"></span>
               <span id="renderStatus">waiting</span>
               <button type="button" id="fitButton" title="Fit graph">Fit</button>
               <select id="exportFormat" aria-label="Export format">
                 <option value="svg">SVG</option>
                 <option value="png">PNG</option>
+                <option value="pdf">PDF</option>
               </select>
               <button type="button" id="downloadButton" class="download-button" title="Export graph" aria-label="Export graph">
                 <svg aria-hidden="true" viewBox="0 0 24 24">

@@ -8,6 +8,12 @@ This tool is intended for personal use on a trusted local machine. It assumes `c
 
 - Node.js
 - Codex CLI available as `codex`
+- for the preview engine:
+  - `dot2tex`
+  - Graphviz `dot`
+  - `pdflatex`
+  - `dvisvgm`
+  - `inkscape`
 - A browser with network access to the frontend CDN dependencies:
   - Ace editor
   - `@viz-js/viz`

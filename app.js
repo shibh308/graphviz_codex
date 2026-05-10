@@ -15,12 +15,14 @@ const editorStatus = document.querySelector("#editorStatus");
 const statusSpinner = document.querySelector("#statusSpinner");
 const interruptButton = document.querySelector("#interruptButton");
 const renderStatus = document.querySelector("#renderStatus");
+const renderSpinner = document.querySelector("#renderSpinner");
 const preview = document.querySelector("#preview");
 const previewStage = document.querySelector("#previewStage");
 const resultPanel = document.querySelector("#resultPanel");
 const fitButton = document.querySelector("#fitButton");
 const downloadButton = document.querySelector("#downloadButton");
 const exportFormat = document.querySelector("#exportFormat");
+const renderEngine = document.querySelector("#renderEngine");
 const promptForm = document.querySelector("#promptForm");
 const promptInput = document.querySelector("#promptInput");
 const patchChoice = document.querySelector("#patchChoice");
@@ -36,8 +38,15 @@ const workspace = document.querySelector(".workspace");
 
 let viz;
 let renderTimer = 0;
+let renderRequestId = 0;
+let renderAbortController = null;
 let lastSvgText = "";
 let scale = 1;
+let panX = 0;
+let panY = 0;
+let isPreviewDragging = false;
+let previewDragLastX = 0;
+let previewDragLastY = 0;
 let codexBusy = false;
 let pendingDot = "";
 let reviewBaseDot = "";
@@ -59,7 +68,8 @@ function decodeDotFromUrl(value) {
 }
 
 function getInitialDot() {
-  const encoded = new URLSearchParams(window.location.search).get("dot");
+  const params = new URLSearchParams(window.location.search);
+  const encoded = params.get("dot");
   if (!encoded) return initialDot;
 
   try {
@@ -69,9 +79,15 @@ function getInitialDot() {
   }
 }
 
-function syncDotToUrl(dot) {
+function getInitialEngine() {
+  const engine = new URLSearchParams(window.location.search).get("engine");
+  return engine === "dot2tex" || engine === "math-svg" ? engine : "default";
+}
+
+function syncStateToUrl(dot = editor.getValue()) {
   const url = new URL(window.location.href);
   url.searchParams.set("dot", encodeDotForUrl(dot));
+  url.searchParams.set("engine", renderEngine.value);
   window.history.replaceState(null, "", url);
 }
 
@@ -86,6 +102,8 @@ const editor = ace.edit("editor", {
   wrap: true,
 });
 
+renderEngine.value = getInitialEngine();
+
 editor.session.setUseWrapMode(true);
 editor.setOptions({
   fontFamily: "Menlo, Monaco, Consolas, monospace",
@@ -95,6 +113,10 @@ editor.setOptions({
 function setRenderStatus(text, state = "") {
   renderStatus.textContent = text;
   renderStatus.style.color = state === "error" ? "#ffb7b7" : state === "ok" ? "#b7efc5" : "";
+}
+
+function setRenderBusy(busy) {
+  renderSpinner.classList.toggle("hidden", !busy);
 }
 
 function setEditorStatus(text) {
@@ -305,7 +327,7 @@ function exitReviewMode(nextDot, { canceled = false } = {}) {
   editor.session.setMode("ace/mode/dot");
   editor.setReadOnly(false);
   editor.setValue(dot, -1);
-  syncDotToUrl(dot);
+  syncStateToUrl(dot);
   clearPendingDot();
   hidePanel();
   if (canceled) {
@@ -344,7 +366,7 @@ function rejectPendingDot() {
 
 function debounceRender() {
   if (inReviewMode) return;
-  syncDotToUrl(editor.getValue());
+  syncStateToUrl();
   clearTimeout(renderTimer);
   setEditorStatus("editing");
   renderTimer = window.setTimeout(renderGraph, 220);
@@ -355,44 +377,198 @@ async function renderGraph() {
 }
 
 async function renderDot(dot, statusText = null) {
+  const requestId = (renderRequestId += 1);
+  renderAbortController?.abort();
+  renderAbortController = new AbortController();
+  setRenderBusy(true);
   setRenderStatus("rendering");
 
   try {
-    viz ||= await instance();
-    const svg = viz.renderSVGElement(dot);
-    lastSvgText = new XMLSerializer().serializeToString(svg);
-    preview.replaceChildren(svg);
+    if (renderEngine.value === "dot2tex") {
+      await renderDot2Tex(dot, requestId, renderAbortController.signal);
+    } else if (renderEngine.value === "math-svg") {
+      await renderMathSvg(dot, requestId, renderAbortController.signal);
+    } else {
+      await renderVizJs(dot, requestId);
+    }
+    if (requestId !== renderRequestId) return;
     scale = 1;
+    panX = 0;
+    panY = 0;
     applyScale();
     setRenderStatus("rendered", "ok");
     setEditorStatus(statusText || `${dot.length} chars`);
   } catch (error) {
+    if (requestId !== renderRequestId) return;
+    if (error?.name === "AbortError") return;
     const pre = document.createElement("pre");
     pre.className = "render-error";
     pre.textContent = error?.message || String(error);
     preview.replaceChildren(pre);
-    setRenderStatus("syntax error", "error");
+    setRenderStatus("render error", "error");
+  } finally {
+    if (requestId === renderRequestId) {
+      renderAbortController = null;
+      setRenderBusy(false);
+    }
   }
+}
+
+async function renderVizJs(dot, requestId) {
+  viz ||= await instance();
+  const svg = viz.renderSVGElement(dot);
+  if (requestId !== renderRequestId) return;
+  lastSvgText = new XMLSerializer().serializeToString(svg);
+  preview.replaceChildren(svg);
+}
+
+async function renderDot2Tex(dot, requestId, abortSignal) {
+  const response = await fetch("/api/render-dot2tex", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    signal: abortSignal,
+    body: JSON.stringify({ dotSource: dot }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error || "dot2tex rendering failed.");
+  }
+  if (requestId !== renderRequestId) return;
+
+  const parser = new DOMParser();
+  const documentSvg = parser.parseFromString(payload.svg, "image/svg+xml");
+  const parseError = documentSvg.querySelector("parsererror");
+  if (parseError) {
+    throw new Error("dot2tex returned invalid SVG.");
+  }
+
+  const svg = documentSvg.documentElement;
+  lastSvgText = payload.svg;
+  preview.replaceChildren(document.importNode(svg, true));
+}
+
+async function renderMathSvg(dot, requestId, abortSignal) {
+  const response = await fetch("/api/render-math-svg", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    signal: abortSignal,
+    body: JSON.stringify({ dotSource: dot }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error || "math SVG rendering failed.");
+  }
+  if (requestId !== renderRequestId) return;
+
+  const parser = new DOMParser();
+  const documentSvg = parser.parseFromString(payload.svg, "image/svg+xml");
+  const parseError = documentSvg.querySelector("parsererror");
+  if (parseError) {
+    throw new Error("math SVG renderer returned invalid SVG.");
+  }
+
+  const svg = documentSvg.documentElement;
+  lastSvgText = payload.svg;
+  preview.replaceChildren(document.importNode(svg, true));
 }
 
 function applyScale() {
   const svg = preview.querySelector("svg");
   if (!svg) return;
-  svg.style.transform = `scale(${scale})`;
+  if (!svg.dataset.naturalWidth || !svg.dataset.naturalHeight) {
+    const viewBox = svg.viewBox?.baseVal;
+    const box = svg.getBoundingClientRect();
+    svg.dataset.naturalWidth = String(svg.width?.baseVal?.value || viewBox?.width || box.width || 1);
+    svg.dataset.naturalHeight = String(svg.height?.baseVal?.value || viewBox?.height || box.height || 1);
+  }
+
+  const width = Number.parseFloat(svg.dataset.naturalWidth);
+  const height = Number.parseFloat(svg.dataset.naturalHeight);
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  const stageBox = previewStage.getBoundingClientRect();
+  svg.style.width = `${scaledWidth}px`;
+  svg.style.height = `${scaledHeight}px`;
+  svg.style.transform = `translate(${panX}px, ${panY}px)`;
+  preview.style.width = `${Math.max(stageBox.width, scaledWidth + 56)}px`;
+  preview.style.height = `${Math.max(stageBox.height, scaledHeight + 56)}px`;
+}
+
+function zoomPreview(event) {
+  const svg = preview.querySelector("svg");
+  if (!svg || event.ctrlKey) return;
+
+  event.preventDefault();
+  const previousScale = scale;
+  const zoomFactor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const nextScale = Math.max(0.1, Math.min(5, previousScale * zoomFactor));
+  if (nextScale === previousScale) return;
+
+  const stageBox = previewStage.getBoundingClientRect();
+  const anchorX = event.clientX - stageBox.left + previewStage.scrollLeft;
+  const anchorY = event.clientY - stageBox.top + previewStage.scrollTop;
+  scale = nextScale;
+  applyScale();
+  previewStage.scrollLeft = anchorX * (nextScale / previousScale) - (event.clientX - stageBox.left);
+  previewStage.scrollTop = anchorY * (nextScale / previousScale) - (event.clientY - stageBox.top);
+}
+
+function startPreviewDrag(event) {
+  if (event.button !== 0 || event.target.closest(".preview-panel")) return;
+
+  event.preventDefault();
+  isPreviewDragging = true;
+  previewDragLastX = event.clientX;
+  previewDragLastY = event.clientY;
+  previewStage.classList.add("dragging");
+  window.addEventListener("pointermove", dragPreview);
+  window.addEventListener("pointerup", stopPreviewDrag, { once: true });
+  window.addEventListener("pointercancel", stopPreviewDrag, { once: true });
+}
+
+function dragPreview(event) {
+  if (!isPreviewDragging) return;
+
+  event.preventDefault();
+  panX += event.clientX - previewDragLastX;
+  panY += event.clientY - previewDragLastY;
+  previewDragLastX = event.clientX;
+  previewDragLastY = event.clientY;
+  applyScale();
+}
+
+function stopPreviewDrag() {
+  if (!isPreviewDragging) return;
+
+  isPreviewDragging = false;
+  previewStage.classList.remove("dragging");
+  window.removeEventListener("pointermove", dragPreview);
+  window.removeEventListener("pointerup", stopPreviewDrag);
+  window.removeEventListener("pointercancel", stopPreviewDrag);
 }
 
 function fitGraph() {
   const svg = preview.querySelector("svg");
   if (!svg) return;
+  applyScale();
 
   const stageBox = previewStage.getBoundingClientRect();
-  const graphBox = svg.getBoundingClientRect();
-  if (!graphBox.width || !graphBox.height) return;
+  const width = Number.parseFloat(svg.dataset.naturalWidth);
+  const height = Number.parseFloat(svg.dataset.naturalHeight);
+  if (!width || !height) return;
 
-  const xScale = (stageBox.width - 56) / graphBox.width;
-  const yScale = (stageBox.height - 56) / graphBox.height;
+  const xScale = (stageBox.width - 56) / width;
+  const yScale = (stageBox.height - 56) / height;
   scale = Math.max(0.25, Math.min(1.75, xScale, yScale));
+  panX = 0;
+  panY = 0;
   applyScale();
+  previewStage.scrollLeft = Math.max(0, (preview.scrollWidth - stageBox.width) / 2);
+  previewStage.scrollTop = Math.max(0, (preview.scrollHeight - stageBox.height) / 2);
 }
 
 function downloadSvg() {
@@ -445,7 +621,58 @@ function downloadPng() {
   image.src = url;
 }
 
+async function downloadPdf() {
+  setRenderBusy(true);
+  setRenderStatus("exporting");
+
+  try {
+    const response = await fetch("/api/export-pdf", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        dotSource: editor.getValue(),
+        renderEngine: renderEngine.value,
+      }),
+    });
+
+    if (!response.ok) {
+      let message = "pdf export failed.";
+      try {
+        const payload = await response.json();
+        message = payload?.error || message;
+      } catch {
+        message = await response.text();
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "graphviz-preview.pdf";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setRenderStatus("rendered", "ok");
+  } catch (error) {
+    setRenderStatus("pdf failed", "error");
+    const pre = document.createElement("pre");
+    pre.className = "render-error";
+    pre.textContent = error?.message || String(error);
+    preview.replaceChildren(pre);
+  } finally {
+    setRenderBusy(false);
+  }
+}
+
 function downloadGraph() {
+  if (exportFormat.value === "pdf") {
+    downloadPdf();
+    return;
+  }
+
   if (exportFormat.value === "png") {
     downloadPng();
     return;
@@ -489,6 +716,7 @@ async function applyCodexPrompt(event) {
         dotSource: currentDot,
         instruction: request,
         reasoningEffort: reasoningEffort.value,
+        renderEngine: renderEngine.value,
         context: codexHistory,
       }),
     });
@@ -588,6 +816,12 @@ function stopResize() {
 editor.session.on("change", debounceRender);
 fitButton.addEventListener("click", fitGraph);
 downloadButton.addEventListener("click", downloadGraph);
+renderEngine.addEventListener("change", () => {
+  syncStateToUrl();
+  renderGraph();
+});
+previewStage.addEventListener("wheel", zoomPreview, { passive: false });
+previewStage.addEventListener("pointerdown", startPreviewDrag);
 promptForm.addEventListener("submit", applyCodexPrompt);
 promptInput.addEventListener("keydown", handlePromptKeydown);
 vimModeToggle.addEventListener("change", toggleVimMode);
@@ -597,5 +831,5 @@ rejectPatchButton.addEventListener("click", rejectPendingDot);
 interruptButton.addEventListener("click", interruptCodex);
 clearLogButton.addEventListener("click", resetConversation);
 
-syncDotToUrl(editor.getValue());
+syncStateToUrl();
 renderGraph();

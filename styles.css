@@ -48,6 +48,11 @@ select {
   color: #eeeeee;
 }
 
+select option {
+  background: #ffffff;
+  color: #111111;
+}
+
 button {
   min-width: 26px;
   padding: 0 7px;
@@ -305,6 +310,10 @@ body.resizing .splitter {
   padding: 0 2px;
 }
 
+#renderEngine {
+  width: 86px;
+}
+
 .download-button {
   display: grid;
   place-items: center;
@@ -326,6 +335,7 @@ body.resizing .splitter {
   position: relative;
   min-height: 0;
   overflow: auto;
+  cursor: grab;
   background:
     linear-gradient(45deg, #f8f8f8 25%, transparent 25%),
     linear-gradient(-45deg, #f8f8f8 25%, transparent 25%),
@@ -336,19 +346,23 @@ body.resizing .splitter {
   background-size: 20px 20px;
 }
 
+.preview-stage.dragging {
+  cursor: grabbing;
+}
+
 .preview-output {
   display: grid;
   min-width: 100%;
   min-height: 100%;
   place-items: center;
   padding: 28px;
+  user-select: none;
 }
 
 .preview-output svg {
   max-width: none;
   height: auto;
-  transform-origin: center center;
-  transition: transform 120ms ease;
+  pointer-events: none;
 }
 
 .render-error {

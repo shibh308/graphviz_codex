@@ -1,7 +1,10 @@
-export function buildDotUpdatePrompt(dotSource, userInstruction, context = []) {
+export function buildDotUpdatePrompt(dotSource, userInstruction, context = [], options = {}) {
   const currentSource = dotSource.trim()
     ? dotSource
     : "(The current DOT source is empty. Create a complete valid DOT graph from the user's instruction.)";
+  const renderEngine = ["dot2tex", "math-svg"].includes(options.renderEngine) ? options.renderEngine : "default";
+  const dot2texEnabled = renderEngine === "dot2tex";
+  const mathSvgEnabled = renderEngine === "math-svg";
   const conversationContext = context.length
     ? context
         .map((item, index) => {
@@ -34,6 +37,15 @@ Result: ${decision}`;
 
 You will receive prior Codex Console context, the complete current DOT source, and the user's latest instruction.
 Return only data that matches the provided output schema.
+
+Current preview render engine: ${renderEngine}
+dot2tex mode enabled: ${dot2texEnabled ? "yes" : "no"}
+math-svg mode enabled: ${mathSvgEnabled ? "yes" : "no"}
+${dot2texEnabled
+  ? "- The preview is rendered through dot2tex/LaTeX. The user can use TeX math in labels, including $$...$$ notation. Prefer preserving or using TeX-friendly labels when the request involves formulas."
+  : mathSvgEnabled
+    ? "- The preview is rendered through Graphviz after converting label formulas written as $...$ or $$...$$ into SVG math images. Prefer preserving or using TeX math labels when the request involves formulas. This mode is useful for formulas without requiring full dot2tex conversion."
+    : "- The preview is rendered through the default Graphviz SVG renderer. Avoid introducing TeX-only label syntax unless the user explicitly requests a math-oriented render mode such as dot2tex or math-svg."}
 
 Decide whether the latest user instruction needs a DOT edit suggestion:
 - If the user asks to change, create, remove, restyle, reorganize, or otherwise update the graph, set hasSuggestion to true.
